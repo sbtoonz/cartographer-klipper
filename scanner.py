@@ -1718,17 +1718,36 @@ class Scanner:
         if "data" not in sample or "freq" not in sample:
             raise ValueError("Sample must contain 'data' and 'freq' keys.")
     
+        # Initialize dynamic threshold variables (if not already done)
+        if not hasattr(self, "f_avg"):
+            self.f_avg = sample["freq"]
+            self.f_std = 0.0
+            self.alpha = 0.1  # Smoothing factor, tweak based on your system
+            self.k = 3  # Safety factor for threshold
+    
         if not self.hardware_failure:
-            # Determine hardware failure conditions
+            # Update rolling average and standard deviation
+            freq = sample["freq"]
+            self.f_avg = self.alpha * freq + (1 - self.alpha) * self.f_avg
+            self.f_std = self.alpha * abs(freq - self.f_avg) + (1 - self.alpha) * self.f_std
+            dynamic_threshold = self.f_avg + self.k * self.f_std
+
+            # Debug log for threshold values
+            logging.debug(
+                f"Dynamic Threshold Debug: freq={freq}, f_avg={self.f_avg}, "
+                f"f_std={self.f_std}, dynamic_threshold={dynamic_threshold}"
+            )
+
+            # Check for coil issues
             msg = None
             if sample["data"] == 0xFFFFFFF:
                 msg = "Coil is shorted or not connected."
-            elif self.fmin is not None and sample["freq"] > 1.35 * self.fmin:
-                msg = "Coil expected max frequency exceeded."
+                logging.debug(f"Debug: data={sample['data']} indicates connection issue.")
+            elif freq > dynamic_threshold:
+                msg = "Coil expected max frequency exceeded (dynamic threshold)."
                 logging.debug(
-                f"Debug info: freq={sample['freq']}, fmin={self.fmin}, "
-                f"threshold={1.35 * self.fmin} (frequency exceeded)."
-            )
+                    f"Frequency {freq} exceeded dynamic threshold {dynamic_threshold}."
+                )
 
             if msg:
                 # Log and handle hardware failure
@@ -1743,6 +1762,7 @@ class Scanner:
         elif self._stream_en:
             # Handle already detected hardware failure
             self.printer.invoke_shutdown(self.hardware_failure)
+
 
 
     def _enrich_sample_time(self, sample):
