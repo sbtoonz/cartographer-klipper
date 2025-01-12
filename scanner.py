@@ -1718,75 +1718,6 @@ class Scanner:
 
         # Streaming mode
 
-    def _check_hardware(self, sample):
-        # Validate sample input
-        if "data" not in sample or "freq" not in sample:
-            raise self._mcu.error("Sample must contain 'data' and 'freq' keys.")
-
-        # Initialize variables on the first call
-        if not hasattr(self, "freq_window"):
-            self.freq_window = deque(maxlen=SLIDING_WINDOW_SIZE)  # Sliding window
-            self.min_threshold = None  # Minimum frequency threshold
-
-        # Add the current frequency to the sliding window
-        freq = sample["freq"]
-        self.freq_window.append(freq)
-
-        # Calculate statistics from the sliding window
-        if len(self.freq_window) > 1:
-            freq_window_array = np.array(self.freq_window)  # Convert deque to numpy array
-            f_avg = np.mean(freq_window_array)
-            f_std = np.std(freq_window_array)
-            dynamic_threshold = f_avg + SIGMA_MULTIPLIER * f_std  # Dynamic threshold
-        else:
-            # Fallback during initialization
-            f_avg = freq
-            f_std = 0
-            dynamic_threshold = freq * THRESHOLD_MULTIPLIER  # Fallback threshold
-
-
-        # Ensure a minimum threshold is set
-        if self.min_threshold is None:
-            self.min_threshold = freq * THRESHOLD_MULTIPLIER  # Initial minimum threshold
-
-        # Final threshold (whichever is greater: dynamic or minimum)
-        final_threshold = max(dynamic_threshold, self.min_threshold)
-
-        # Debug log for threshold values
-        logging.debug(
-            f"Sliding Window Threshold Debug: freq={freq}, f_avg={f_avg}, "
-            f"f_std={f_std}, dynamic_threshold={dynamic_threshold}, "
-            f"min_threshold={self.min_threshold}, final_threshold={final_threshold}"
-        )
-
-        # Check for hardware issues
-        if not self.hardware_failure:
-            msg = None
-
-            if sample["data"] == SHORTED_COIL_VALUE:
-                msg = "Coil is shorted or not connected."
-                logging.debug(f"Debug: data={sample['data']} indicates connection issue.")
-            elif freq > final_threshold:
-                msg = "Coil expected max frequency exceeded (sliding window)."
-                logging.debug(
-                    f"Frequency {freq} exceeded final threshold {final_threshold}."
-                )
-
-            if msg:
-                # Log and handle hardware failure
-                full_msg = f"Scanner hardware issue: {msg}"
-                self.hardware_failure = full_msg
-                logging.error(full_msg)
-
-                if self._stream_en:
-                    self.printer.invoke_shutdown(full_msg)
-                else:
-                    self.gcode.respond_raw(f"!! {full_msg}\n")
-        elif self._stream_en:
-            # Handle already detected hardware failure
-            self.printer.invoke_shutdown(self.hardware_failure)
-
-
     def _enrich_sample_time(self, sample):
         clock = sample["clock"] = self._mcu.clock32_to_clock64(sample["clock"])
         sample["time"] = self._mcu.clock_to_print_time(clock)
@@ -1801,7 +1732,6 @@ class Scanner:
     def _enrich_sample_freq(self, sample):
         sample["data_smooth"] = self._data_filter.value()
         sample["freq"] = self.count_to_freq(sample["data_smooth"])
-        self._check_hardware(sample)
 
     def _enrich_sample(self, sample):
         sample["dist"] = self.freq_to_dist(sample["freq"], sample["temp"])
